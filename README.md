@@ -1,4 +1,6 @@
 # mfaure_Houdini_tools
 
-Personnal hda make for houdini
+hda made in houdini
+presets I m using often
+
 feel free to use 
