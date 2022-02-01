@@ -1,0 +1,432 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pythonPanelDocument>
+  <!-- This file contains definitions of Python interfaces and the
+ interfaces menu.  It should not be hand-edited when it is being
+ used by the application.  Note, that two definitions of the
+ same interface or of the interfaces menu are not allowed
+ in a single file. -->
+  <interface name="interface1" label="New Python Interface" icon="MISC_python" showNetworkNavigationBar="false" help_url="">
+    <script><![CDATA[import os
+import hou
+import re
+import subprocess
+from PySide2 import QtWidgets, QtUiTools, QtGui, QtCore
+from PySide2.QtCore import *
+from PySide2.QtGui import *
+from PySide2.QtWidgets import *
+import numpy as np
+import webbrowser
+
+
+
+class MfProjectViewer(QtWidgets.QWidget):
+
+    def __init__(self):
+        super(MfProjectViewer, self).__init__()
+        self.scriptpath = '//montreal/workflow/pipeline/shared/maximef/mfaure_tools/python_panels/MfProjectViewer'
+                
+        self.tmpPath = hou.homeHoudiniDirectory()+'/Proj_Path.txt'
+        try:
+            pathfile = open(self.tmpPath)
+        except IOError:
+               #If not exists, create the file
+               pathfile = open(self.tmpPath, 'w+')
+
+        txtcon = pathfile.readline()
+        pathfile.close()
+        self.oripath = txtcon.replace('\\', '/')
+        self.proj = self.oripath
+        self.transition = '0'
+        loader = QtUiTools.QUiLoader()
+        self.ui = loader.load(self.scriptpath + '/UI.ui')
+
+        self.ui.setStyleSheet(""" 
+            QPushButton{ color: rgb(255,255, 255); background-color: rgba(50, 50, 50, 250);border:none; border-radius:17}
+            
+            QPushButton:hover,
+            #autoEnvVariables:hover,
+            #folderlist:hover,
+            #SAVEFILE QPushButton:hover,
+            QGroupBox#manualvariable QPushButton:!disabled:hover{ 
+                color: black; font-weight:bold; background-color: #ffa600;}
+                
+            #SAVEFILE QPushButton{border-radius:20}
+            
+            #SAVEFILE QPushButton{ color: rgb(255, 255, 255);background-color:#5b25fa;transition:all 0.7s }       
+            #autoEnvVariables{ color: rgb(255, 255, 255);background-color:#ff3c46; }
+            #folderlist{background-color:rgb(40,40, 40);border:none;}     
+            #ALL, #scrollAreaAll{border:none}
+            QGroupBox{border-color:rgbx(255,255,255,50);border-radius:0;}
+            
+            QGroupBox#manualvariable QPushButton:disabled{color: grey; background-color: rgba(50, 50, 50, 150);  border-radius:10;}
+            QGroupBox#manualvariable QPushButton:!disabled{ background-color:#fef99c ;color:black; border-radius:10}
+            QGroupBox#manualvariable QPushButton:!disabled:hover{font-weight:normal}
+        """)
+        
+        
+        self.MF_PV_title = self.ui.findChild(QtWidgets.QPushButton, 'MF_PV_title')
+        self.MF_PV_title.clicked.connect(self.openDocumentation)
+        
+        
+        self.setproj = self.ui.findChild(QtWidgets.QPushButton, 'setproj')
+        self.setproj.setText("")
+        self.setproj.setIcon(hou.qt.Icon("BUTTONS_add"))
+        self.setproj.setToolTip('Add a path of houdini scene to the list')  
+        self.setproj.setText('')
+        self.setproj.clicked.connect(self.setproject)
+        self.openPathList = self.ui.findChild(QtWidgets.QPushButton, 'openPathList')        
+        self.openPathList.clicked.connect(self.OpenPathList)
+        self.openPathList.setIcon(hou.qt.Icon("DATATYPES_file"))
+        self.openPathList.setToolTip('Open path list')  
+        self.openPathList.setText('')
+        
+        self.scenelist = self.ui.findChild(QtWidgets.QListWidget, 'scenelist')
+
+        self.folderlist = self.ui.findChild(QtWidgets.QComboBox, 'folderlist')
+        self.folderlist.activated.connect(self.Refresh)
+        self.folderlist.activated.connect(self.CreateInterface)
+    
+    
+        self.saveas = self.ui.findChild(QtWidgets.QPushButton, 'save_as')        
+        self.saveas.clicked.connect(self.saveprojectAs)
+
+        self.save = self.ui.findChild(QtWidgets.QPushButton, 'save')        
+        self.save.clicked.connect(self.saveProject)
+
+        self.incrementsave = self.ui.findChild(QtWidgets.QPushButton, 'increment_save')        
+        self.incrementsave.clicked.connect(self.incrementSave)
+        
+        self.ImportPath = self.ui.findChild(QtWidgets.QPushButton, 'ImportPath')
+        self.ImportPath.clicked.connect( self.SubmitImportPath )
+        self.ImportPath.setToolTip("set IMPORT PATH")
+
+        self.ExportPath = self.ui.findChild(QtWidgets.QPushButton, 'ExportPath')
+        self.ExportPath.clicked.connect( self.SubmitExportPath )
+        self.ExportPath.setToolTip("set EXPORTS PATH")
+
+        self.elementsPath= self.ui.findChild(QtWidgets.QPushButton, 'elementsPath')
+        self.elementsPath.clicked.connect( self.SubmitElementsPath )
+        self.elementsPath.setToolTip("set ELMTS PATH")
+
+        self.outPath = self.ui.findChild(QtWidgets.QPushButton, 'outPath')
+        self.outPath.clicked.connect( self.SubmitOutPath )        
+        self.outPath.setToolTip("set OUT PATH")
+
+        self.publishPath = self.ui.findChild(QtWidgets.QPushButton, 'publishPath')
+        self.publishPath.clicked.connect( self.SubmitPublishPath )
+        self.publishPath.setToolTip("set PUBLISH PATH")
+        
+        self.publishPath = self.ui.findChild(QtWidgets.QPushButton, 'cachePath')
+        self.publishPath.clicked.connect( self.SubmitCachesPath )
+        self.publishPath.setToolTip("set CACHES PATH")
+
+        self.autoEnvVariables = self.ui.findChild(QtWidgets.QPushButton, 'autoEnvVariables')
+        self.autoEnvVariables.clicked.connect( self.SubmitAutoEnvVariables )
+        self.autoEnvVariables.setToolTip('automatically setup CACHE, ELEMENTS, PUBLISH and OUT variables.\n You need to save your file in a proper way like shot/work/task/hou')  
+        
+        self.refreshBtn = self.ui.findChild(QtWidgets.QPushButton, 'refreshBtn')        
+        self.refreshBtn.clicked.connect(self.CreateInterface)
+        self.refreshBtn.setText('')
+        self.refreshBtn.setToolTip('refresh scene list')  
+        self.refreshBtn.setIcon(hou.qt.Icon("BUTTONS_cook", 50, 50))
+        
+        self.openFolder = self.ui.findChild(QtWidgets.QPushButton, 'openFolder')        
+        self.openFolder.clicked.connect(self.OpenFolder)
+        self.openFolder.setIcon(hou.qt.Icon("DATATYPES_bundle"))
+        self.openFolder.setToolTip('open the folder in explorer')  
+        self.openFolder.setText('')
+
+        
+        self.openHoudiniFolder = self.ui.findChild(QtWidgets.QPushButton, 'openHoudiniFolder')        
+        self.openHoudiniFolder.clicked.connect(self.OpenHoudiniFolder)
+        self.openHoudiniFolder.setIcon(hou.qt.Icon("DATATYPES_folder"))
+        self.openHoudiniFolder.setToolTip('open the folder in Houdini')  
+        self.openHoudiniFolder.setText('')        
+        
+        mainLayout = QtWidgets.QVBoxLayout()
+        mainLayout.setAlignment(Qt.AlignTop)
+        mainLayout.addWidget(self.ui)
+        self.setLayout(mainLayout)
+
+
+        self.Refresh()
+        self.CreateInterface()
+        self.scenelist.setIconSize(QSize(150, 150))
+
+    def openDocumentation(self):
+        webbrowser.open_new_tab("https://sites.google.com/a/momentfactory.com/contenu/pipeline-tools/houdini-project-viewer")
+
+    def saveprojectAs(self):
+        cur_desktop = hou.ui.curDesktop()
+        scene = cur_desktop.paneTabOfType(hou.paneTabType.SceneViewer)
+        a = hou.hipFile.name()
+
+        k = a.split('/')
+        hip = ''
+       
+        hip = hou.ui.selectFile(title='Save', file_type=hou.fileType.Hip, start_directory=self.projpath )
+        if hip != '':
+            hou.hipFile.save(file_name=hip)
+
+        f = hou.frame()
+        fn = hou.hipFile.basename().split('.')
+        del fn[-1]
+        filename = '.'.join(fn)
+        path = hou.hipFile.path().split('/')
+        del path[-1]
+        filepath = '/'.join(path) + '/_thumbnails/' + filename + '.jpg'
+        newpath =  '/'.join(path) + '/_thumbnails' 
+        if not os.path.exists(newpath):
+            os.makedirs(newpath)
+            
+        flip_options = scene.flipbookSettings().stash()
+        flip_options.frameRange((f, f))
+        flip_options.useResolution(1)
+        flip_options.resolution((500, 500))
+        flip_options.output(filepath)
+        scene.flipbook(scene.curViewport(), flip_options)
+        self.CreateInterface()
+    
+    def saveProject(self):
+        cur_desktop = hou.ui.curDesktop()
+        scene = cur_desktop.paneTabOfType(hou.paneTabType.SceneViewer)
+        hip = hou.hipFile.name()
+        hou.hipFile.save(file_name=hip)
+
+        f = hou.frame()
+        fn = hou.hipFile.basename().split('.')
+        del fn[-1]
+        filename = '.'.join(fn)
+        path = hou.hipFile.path().split('/')
+        del path[-1]
+        filepath = '/'.join(path) + '/_thumbnails/' + filename + '.jpg'
+        newpath =  '/'.join(path) + '/_thumbnails' 
+        if not os.path.exists(newpath):
+            os.makedirs(newpath)
+        flip_options = scene.flipbookSettings().stash()
+        flip_options.frameRange((f, f))
+        flip_options.useResolution(1)
+        flip_options.resolution((500, 500))
+        flip_options.output(filepath)
+        scene.flipbook(scene.curViewport(), flip_options)
+        self.CreateInterface()
+
+    def incrementSave(self):
+
+        new_suffix_format = '_0001'
+        regex = re.compile('(.*?)(\d+)(\.\w+)')
+        hip = hou.hipFile
+        filename = hip.path()
+        match = regex.match(filename)
+        if match:
+            filename, number, ext = match.groups()
+            filename += str(int(number) + 1).rjust(len(number), '0') + ext
+        else:
+            filename, ext = os.path.splitext(filename)
+            filename += new_suffix_format + ext
+
+        if os.path.isfile(filename):
+            overwrite = hou.ui.displayConfirmation(
+                'The file "{}" already exists. Do you want to overwrite it?'
+                .format(filename))
+            if not overwrite:
+                return
+
+
+        #flipbook
+        cur_desktop = hou.ui.curDesktop()
+        scene = cur_desktop.paneTabOfType(hou.paneTabType.SceneViewer)
+        hip.save(filename)
+
+        f = hou.frame()
+        fn = hou.hipFile.basename().split('.')
+        del fn[-1]
+        filename = '.'.join(fn)
+        path = hou.hipFile.path().split('/')
+        del path[-1]
+        filepath = '/'.join(path) + '/_thumbnails/' + filename + '.jpg'
+        
+        flip_options = scene.flipbookSettings().stash()
+        flip_options.frameRange((f, f))
+        flip_options.useResolution(1)
+        flip_options.resolution((500, 500))
+        flip_options.output(filepath)
+        scene.flipbook(scene.curViewport(), flip_options)
+
+        self.CreateInterface()
+        
+    def setproject(self):
+        setpath = hou.ui.selectFile(title='Set Project', file_type=hou.fileType.Directory)
+        newpath = os.path.dirname(setpath) + '/'
+        
+        if newpath != '/':
+            
+            self.proj = newpath
+            sizeFile = os.stat(hou.homeHoudiniDirectory()+'/Proj_Path.txt').st_size
+            f = open(hou.homeHoudiniDirectory()+'/Proj_Path.txt', 'a+')
+            
+            if(sizeFile == 0):
+                f.write(newpath)
+            else :
+                f.write("\n"+newpath)
+                
+            
+            f.close()
+            
+        #self.setproj.setText("added : "+str(newpath))
+        self.Refresh()
+        self.CreateInterface()
+
+    def SubmitExportPath(self):
+        self.SetEnvironnementVariableMannualy("EXPORT")
+
+    def SubmitImportPath(self):
+        self.SetEnvironnementVariableMannualy("IMPORT")
+
+    def SubmitElementsPath(self):
+        self.SetEnvironnementVariableMannualy("ELMTS")
+
+    def SubmitCachesPath(self):
+        self.SetEnvironnementVariableMannualy("CACHES")
+
+
+    def SubmitOutPath(self):
+        self.SetEnvironnementVariableMannualy("OUT")
+
+    def SubmitPublishPath(self):
+        self.SetEnvironnementVariableMannualy("PUBLISH")
+
+
+    def SubmitAutoEnvVariables(self):
+        currentHipPath = hou.hipFile.name()
+        currentPath = os.path.dirname(currentHipPath)
+        
+
+        if (currentPath.find("work") >0 and currentPath.find("hou")==(len(currentPath)-3) ):
+
+            ELMTSv = os.path.dirname(currentPath.replace("work", "element"))
+            CACHESv = currentPath.replace("work", "cache")
+            OUTv =  os.path.dirname(currentPath.replace("work", "out"))
+            PUBLISHv = currentPath.replace("work", "publish") 
+
+            hou.hscript( "setenv ELMTS = "+ELMTSv )
+            hou.hscript( "setenv CACHES = "+CACHESv )
+            hou.hscript( "setenv OUT = "+OUTv )
+            hou.hscript( "setenv PUBLISH = "+PUBLISHv)
+            
+            hou.ui.displayMessage( "Environement variable setuped properly : \n \n$ELMTS="+ELMTSv+"\n\n$CACHES="+CACHESv+ "\n\n$OUT="+OUTv+ "\n\n$PUBLISH="+PUBLISHv )
+
+        else :
+            hou.ui.displayMessage("your scene is not saved properly in this kind of structure : shotname/work/task/hou")
+
+
+    def SetEnvironnementVariableMannualy(self, nameEnvVariable):
+        nameEnvVariable = str(nameEnvVariable)
+        setEnvPath = hou.ui.selectFile(title="Set "+nameEnvVariable+" path", file_type=hou.fileType.Directory)
+        newEnvPath = os.path.dirname(setEnvPath)
+        
+
+        if newEnvPath != '':            
+            self.Refresh()
+            self.CreateInterface()
+            hou.hscript( "setenv "+nameEnvVariable+" = "+newEnvPath )
+            hou.ui.displayMessage( nameEnvVariable+" VARIABLES UPDATED")
+
+
+    def Refresh(self):
+        if self.proj != self.transition and self.proj != '':
+            self.folderlist.clear()
+
+            fl = open(hou.homeHoudiniDirectory()+'/Proj_Path.txt').read().splitlines()
+            fl.reverse()
+            for folder in fl:
+                self.folderlist.addItem(folder)
+                
+            self.transition = self.proj
+        self.projpath = str(self.folderlist.currentText()) 
+        
+    def OpenHoudiniFolder(self):
+    
+        hipFile  = hou.ui.selectFile(start_directory=self.projpath[:-1], title="openFile", file_type=hou.fileType.Hip, chooser_mode=hou.fileChooserMode.Read) 
+        
+        if hipFile != "" :
+            if os.path.isfile(hipFile) :
+                hou.hipFile.load(hipFile) 
+            else :
+                hou.hipFile.load(hipFile+'nc')     
+        
+    def OpenFolder(self):
+        path = self.projpath[:-1]
+        path = path.replace("/","\\")
+        expression = 'explorer "'+str(path)+'"'
+        subprocess.Popen(expression)
+        
+       
+    def OpenPathList(self):
+        path = hou.homeHoudiniDirectory()+'/Proj_Path.txt'
+        path = path.replace("/","\\")
+        expression = 'explorer "'+str(path)+'"'
+        #print expression
+
+        subprocess.Popen(expression)
+
+    def CreateInterface(self):
+        self.scenelist.clear()
+        try:
+            for file in os.listdir(self.projpath):
+                if  file.endswith('.hip') or file.endswith('.hipnc') or file.endswith('.hiplc'):
+                    fn = file.split('.')
+                    del fn[-1]
+                    name = '.'.join(fn)
+                    #print name
+                    if (os.path.exists(self.projpath+"_thumbnails/"+name+".jpg")):
+                        instex0 = self.projpath+"_thumbnails/"+name+".jpg"
+                        
+                    else :
+                        instex0 = self.scriptpath+"/defaultImage.png"
+                    
+                    jpg0 = QtGui.QPixmap(instex0).scaled(200, 200)
+                    icon = QtGui.QIcon(jpg0)
+                    item = QListWidgetItem(icon, '')
+                    item.setText(name)
+                    item.setToolTip(name)
+                    item.setMinimumWeight = 100
+                    item.setMaximumWeight = 100
+                    self.scenelist.addItem(item)
+                    endfile = file
+            '''
+            try:
+                instex1 = self.projpath + endfile
+                jpg1 = QtGui.QPixmap(instex1).scaled(500, 500)
+                #self.label.setPixmap(jpg1)
+            except UnboundLocalError:
+                pass
+            '''
+
+        except WindowsError:
+            pass
+
+        self.scenelist.doubleClicked.connect(self.openHIP)
+        self.scenelist.clicked.connect(self.viewTex)
+
+    def viewTex(self, item):
+        texname = item.data()
+        instex = self.projpath + texname + '.jpg'
+        jpg = QtGui.QPixmap(instex).scaled(500, 500)
+        
+
+    def openHIP(self, item):
+        filename = item.data()
+        
+        hipFile = self.projpath + filename + '.hip'
+        if os.path.isfile(hipFile) :
+            hou.hipFile.load(hipFile) 
+        else :
+            hou.hipFile.load(hipFile+'nc') 
+
+def createInterface():    
+    return MfProjectViewer()]]></script>
+    <includeInToolbarMenu menu_position="104" create_separator="false"/>
+    <help><![CDATA[]]></help>
+  </interface>
+</pythonPanelDocument>
